@@ -61,6 +61,13 @@ systemctl start NetworkManager
 systemctl stop dhcpcd 2>/dev/null || true
 systemctl disable dhcpcd 2>/dev/null || true
 
+# Fix "Wait for Network to be Configured" boot delay (2min timeout)
+if systemctl list-unit-files systemd-networkd-wait-online.service &>/dev/null; then
+    systemctl disable systemd-networkd-wait-online.service 2>/dev/null || true
+    systemctl mask systemd-networkd-wait-online.service 2>/dev/null || true
+    echo "  Disabled systemd-networkd-wait-online (boot delay fix)"
+fi
+
 # Disable hostapd system service (we manage it ourselves)
 systemctl stop hostapd 2>/dev/null || true
 systemctl disable hostapd 2>/dev/null || true
@@ -76,6 +83,7 @@ EOF
 cat > /etc/NetworkManager/conf.d/openclawbox-timeout.conf <<'EOF'
 [connection]
 auth-retries=1
+connection.wait-device-timeout=0
 EOF
 
 nmcli general reload

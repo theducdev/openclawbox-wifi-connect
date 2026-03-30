@@ -59,6 +59,8 @@ main() {
 
     activate_network_manager
 
+    fix_network_wait_timeout
+
     say "Run 'wifi-connect --help' for available options"
 }
 
@@ -72,6 +74,31 @@ check_os_version() {
     if [ "$_version" == "8 (jessie)" ]; then
         err "Distributions based on Debian 8 (jessie) are not supported"
     fi
+}
+
+fix_network_wait_timeout() {
+    say 'Fixing "Wait for Network to be Configured" boot delay...'
+
+    # Disable systemd-networkd-wait-online to prevent 2min boot delay
+    if [ "$(service_load_state systemd-networkd-wait-online)" != "not-found" ]; then
+        ensure sudo systemctl disable systemd-networkd-wait-online.service
+        ensure sudo systemctl mask systemd-networkd-wait-online.service
+        say 'Disabled systemd-networkd-wait-online.service'
+    fi
+
+    # Set NetworkManager connection wait timeout to 0
+    local _nm_conf_dir="/etc/NetworkManager/conf.d"
+    local _nm_conf_file="$_nm_conf_dir/no-wait-online.conf"
+
+    if [ -d "$_nm_conf_dir" ]; then
+        sudo tee "$_nm_conf_file" > /dev/null <<NMEOF
+[connection]
+connection.wait-device-timeout=0
+NMEOF
+        say "Created $_nm_conf_file"
+    fi
+
+    say 'Network wait timeout fix applied'
 }
 
 activate_network_manager() {

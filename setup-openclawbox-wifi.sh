@@ -96,6 +96,7 @@ cp "$REPO_DIR/captive-portal/captive_portal.py" /usr/local/bin/openclawbox-capti
 chmod +x /usr/local/bin/openclawbox-captive-portal.py
 
 mkdir -p /usr/local/share/openclawbox-wifi/ui
+mkdir -p /var/lib/openclawbox
 cp "$REPO_DIR/ui-custom/index.html" /usr/local/share/openclawbox-wifi/ui/
 
 cp "$REPO_DIR/wifi-switch/server.py" /usr/local/bin/openclawbox-wifi-switch.py

@@ -41,7 +41,7 @@ def run(cmd, **kwargs):
 
 WATCHDOG_INTERVAL = 15  # seconds between WiFi checks
 WATCHDOG_FAIL_THRESHOLD = 4  # consecutive failures before restarting AP
-REBOOT_COUNT_FILE = "/tmp/openclawbox-reboot-count"
+REBOOT_COUNT_FILE = "/var/lib/openclawbox/reboot-count"
 MAX_REBOOTS = 5
 
 
@@ -56,6 +56,7 @@ def get_reboot_count():
 
 def set_reboot_count(count):
     """Save reboot attempt count."""
+    os.makedirs(os.path.dirname(REBOOT_COUNT_FILE), exist_ok=True)
     with open(REBOOT_COUNT_FILE, "w") as f:
         f.write(str(count))
 

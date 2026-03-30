@@ -69,8 +69,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'text/plain')
             self.end_headers()
             self.wfile.write(b'OK')
+            iface = self._get_wifi_iface()
             subprocess.Popen(
-                ['bash', '-c', 'sleep 2 && nmcli device disconnect wlp3s0 && systemctl restart openclawbox-wifi.service'],
+                ['bash', '-c', f'sleep 2 && nmcli device disconnect {iface} && systemctl restart openclawbox-wifi.service'],
             )
         else:
             self.send_response(404)
@@ -81,6 +82,19 @@ class Handler(BaseHTTPRequestHandler):
             return subprocess.check_output(['iwgetid', '-r']).decode().strip() or 'Không xác định'
         except Exception:
             return 'Chưa kết nối'
+
+    def _get_wifi_iface(self):
+        try:
+            result = subprocess.check_output(
+                ['nmcli', '-t', '-f', 'DEVICE,TYPE', 'device']
+            ).decode()
+            for line in result.strip().split('\n'):
+                parts = line.split(':')
+                if len(parts) >= 2 and parts[1] == 'wifi' and not parts[0].endswith('ap'):
+                    return parts[0]
+        except Exception:
+            pass
+        return 'wlan0'
 
     def log_message(self, format, *args):
         pass

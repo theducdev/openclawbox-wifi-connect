@@ -6,23 +6,54 @@ echo "  OpenClawBox WiFi Setup (AP+STA)"
 echo "============================================"
 echo ""
 
+# Detect repo directory (script is in repo root)
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [ ! -f "$REPO_DIR/captive-portal/captive_portal.py" ]; then
+    echo "ERROR: Cannot find captive-portal/captive_portal.py"
+    echo "  Make sure you run this script from the repo directory:"
+    echo "  sudo bash setup-openclawbox-wifi.sh"
+    exit 1
+fi
+
 # Step 1: Install required packages
-echo "[1/5] Installing required packages..."
+echo "[1/6] Installing required packages..."
 apt-get update -qq
 apt-get install -y network-manager dnsmasq hostapd iw wireless-tools python3
 
-# Step 2: Configure NetworkManager
-echo "[2/5] Configuring NetworkManager..."
-tee /etc/netplan/01-network-manager-all.yaml > /dev/null <<'EOF'
+# Step 2: Detect WiFi interface
+echo "[2/6] Detecting WiFi interface..."
+WIFI_IFACE=$(nmcli -t -f DEVICE,TYPE device 2>/dev/null | grep ':wifi$' | head -1 | cut -d: -f1)
+
+if [ -z "$WIFI_IFACE" ]; then
+    # Fallback: try iw
+    WIFI_IFACE=$(iw dev 2>/dev/null | grep 'Interface' | head -1 | awk '{print $2}')
+fi
+
+if [ -z "$WIFI_IFACE" ]; then
+    echo "ERROR: No WiFi interface found!"
+    exit 1
+fi
+
+AP_IFACE="${WIFI_IFACE}ap"
+echo "  WiFi interface: $WIFI_IFACE"
+echo "  AP interface:   $AP_IFACE"
+
+# Step 3: Configure NetworkManager
+echo "[3/6] Configuring NetworkManager..."
+
+# Configure netplan if available
+if command -v netplan &>/dev/null; then
+    tee /etc/netplan/01-network-manager-all.yaml > /dev/null <<'EOF'
 network:
   version: 2
   renderer: NetworkManager
 EOF
-chmod 600 /etc/netplan/01-network-manager-all.yaml
+    chmod 600 /etc/netplan/01-network-manager-all.yaml
+    find /etc/netplan/ -name '*.yaml' ! -name '01-network-manager-all.yaml' -delete 2>/dev/null || true
+    netplan apply
+fi
 
-find /etc/netplan/ -name '*.yaml' ! -name '01-network-manager-all.yaml' -delete 2>/dev/null || true
-
-netplan apply
 systemctl enable NetworkManager
 systemctl start NetworkManager
 
@@ -36,30 +67,22 @@ systemctl disable hostapd 2>/dev/null || true
 systemctl unmask hostapd 2>/dev/null || true
 
 # Tell NetworkManager to ignore the virtual AP interface
-tee /etc/NetworkManager/conf.d/openclawbox-unmanaged.conf > /dev/null <<'EOF'
+cat > /etc/NetworkManager/conf.d/openclawbox-unmanaged.conf <<EOF
 [keyfile]
-unmanaged-devices=interface-name:wlp3s0ap
+unmanaged-devices=interface-name:${AP_IFACE}
 EOF
 
 # Reduce WiFi auth retries for faster failure detection
-tee /etc/NetworkManager/conf.d/openclawbox-timeout.conf > /dev/null <<'EOF'
+cat > /etc/NetworkManager/conf.d/openclawbox-timeout.conf <<'EOF'
 [connection]
 auth-retries=1
 EOF
 
 nmcli general reload
+echo "  NetworkManager configured"
 
-echo "  NetworkManager status:"
-nmcli general status || true
-
-# Step 3: Install captive portal and UI
-echo "[3/5] Installing captive portal..."
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_DIR="${SCRIPT_DIR}/openclawbox-wifi-connect"
-
-if [ ! -d "$REPO_DIR" ]; then
-    REPO_DIR="/home/techla/openclawbox-wifi-connect"
-fi
+# Step 4: Install captive portal and UI
+echo "[4/6] Installing captive portal..."
 
 cp "$REPO_DIR/captive-portal/captive_portal.py" /usr/local/bin/openclawbox-captive-portal.py
 chmod +x /usr/local/bin/openclawbox-captive-portal.py
@@ -70,13 +93,17 @@ cp "$REPO_DIR/ui-custom/index.html" /usr/local/share/openclawbox-wifi/ui/
 cp "$REPO_DIR/wifi-switch/server.py" /usr/local/bin/openclawbox-wifi-switch.py
 chmod +x /usr/local/bin/openclawbox-wifi-switch.py
 
-echo "  Captive portal installed"
+echo "  Files installed"
 
-# Step 4: Create systemd services
-echo "[4/5] Creating systemd services..."
+# Step 5: Create systemd services
+echo "[5/6] Creating systemd services..."
+
+# Stop old services if running
+systemctl stop openclawbox-wifi.service 2>/dev/null || true
+systemctl stop openclawbox-wifi-switch.service 2>/dev/null || true
 
 # Main captive portal service
-tee /etc/systemd/system/openclawbox-wifi.service > /dev/null <<'EOF'
+cat > /etc/systemd/system/openclawbox-wifi.service <<EOF
 [Unit]
 Description=OpenClawBox WiFi Captive Portal (AP+STA)
 After=NetworkManager.service dbus.service
@@ -85,7 +112,7 @@ Wants=NetworkManager.service
 [Service]
 Type=simple
 ExecStart=/usr/bin/python3 /usr/local/bin/openclawbox-captive-portal.py
-ExecStopPost=/bin/bash -c 'iw dev wlp3s0ap del 2>/dev/null; killall hostapd 2>/dev/null; iptables -t nat -F PREROUTING 2>/dev/null; true'
+ExecStopPost=/bin/bash -c 'iw dev ${AP_IFACE} del 2>/dev/null; killall hostapd 2>/dev/null; iptables -t nat -F PREROUTING 2>/dev/null; true'
 Restart=on-failure
 RestartSec=10
 TimeoutStartSec=30
@@ -95,7 +122,7 @@ WantedBy=multi-user.target
 EOF
 
 # WiFi switch service (change WiFi from browser)
-tee /etc/systemd/system/openclawbox-wifi-switch.service > /dev/null <<'EOF'
+cat > /etc/systemd/system/openclawbox-wifi-switch.service <<'EOF'
 [Unit]
 Description=OpenClawBox WiFi Switch
 After=NetworkManager.service
@@ -113,8 +140,8 @@ EOF
 
 systemctl daemon-reload
 
-# Step 5: Enable and start services
-echo "[5/5] Starting services..."
+# Step 6: Enable and start services
+echo "[6/6] Starting services..."
 systemctl enable openclawbox-wifi.service
 systemctl enable openclawbox-wifi-switch.service
 systemctl start openclawbox-wifi.service
@@ -124,6 +151,9 @@ echo ""
 echo "============================================"
 echo "  Setup complete!"
 echo "============================================"
+echo ""
+echo "  WiFi interface: $WIFI_IFACE"
+echo "  AP interface:   $AP_IFACE"
 echo ""
 echo "  Service status:"
 systemctl status openclawbox-wifi.service --no-pager || true

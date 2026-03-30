@@ -16,8 +16,8 @@ import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # Configuration
-STA_IFACE = "wlp3s0"
-AP_IFACE = "wlp3s0ap"
+STA_IFACE = None  # Auto-detected
+AP_IFACE = None   # Auto-generated from STA_IFACE
 AP_IP = "192.168.42.1"
 AP_NETMASK = "255.255.255.0"
 DHCP_START = "192.168.42.10"
@@ -37,6 +37,28 @@ def run(cmd, **kwargs):
     kwargs.setdefault("capture_output", True)
     kwargs.setdefault("text", True)
     return subprocess.run(cmd, **kwargs)
+
+
+def detect_wifi_interface():
+    """Auto-detect the WiFi interface name."""
+    global STA_IFACE, AP_IFACE
+    result = run(["nmcli", "-t", "-f", "DEVICE,TYPE", "device"])
+    for line in result.stdout.strip().split("\n"):
+        parts = line.split(":")
+        if len(parts) >= 2 and parts[1] == "wifi":
+            STA_IFACE = parts[0]
+            AP_IFACE = STA_IFACE + "ap"
+            print(f"  WiFi interface detected: {STA_IFACE}")
+            return
+    # Fallback: try iw
+    result = run(["iw", "dev"])
+    match = re.search(r"Interface\s+(\S+)", result.stdout)
+    if match:
+        STA_IFACE = match.group(1)
+        AP_IFACE = STA_IFACE + "ap"
+        print(f"  WiFi interface detected: {STA_IFACE}")
+        return
+    raise RuntimeError("No WiFi interface found")
 
 
 def get_current_ssid():
@@ -450,6 +472,9 @@ def main():
     print("=" * 44)
     print("  OpenClawBox WiFi Captive Portal (AP+STA)")
     print("=" * 44)
+
+    # Auto-detect WiFi interface
+    detect_wifi_interface()
 
     # Check if already connected
     ssid = get_current_ssid()

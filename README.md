@@ -25,16 +25,15 @@ Các giải pháp cũ (balena wifi-connect, comitup...) phải **tắt AP để 
 - Card WiFi hỗ trợ AP+STA đồng thời (kiểm tra: `iw list | grep -A 8 "valid interface"`)
 - Quyền root
 
-### Cài đặt
+### Cài đặt (1 lệnh)
 
 ```bash
-git clone https://github.com/theducdev/openclawbox-wifi-connect.git
-cd openclawbox-wifi-connect
-sudo bash setup-openclawbox-wifi.sh
+sudo apt-get install -y git && git clone https://github.com/theducdev/openclawbox-wifi-connect.git /tmp/openclawbox-wifi-setup && sudo bash /tmp/openclawbox-wifi-setup/setup-openclawbox-wifi.sh && rm -rf /tmp/openclawbox-wifi-setup
 ```
 
 Script sẽ tự động:
 - Cài các gói cần thiết (`network-manager`, `hostapd`, `iw`, `dnsmasq`)
+- Detect WiFi interface (hỗ trợ `wlan0`, `wlp3s0`, ...)
 - Cấu hình NetworkManager
 - Cài captive portal và WiFi switch service
 - Tạo và bật systemd services

@@ -116,7 +116,7 @@ echo "Chưa có WiFi. Khởi động WiFi Connect..."
 wifi-connect \
     --portal-ssid "OpenClawBox Setup" \
     --portal-gateway 192.168.42.1 \
-    --portal-listening-port 80 \
+    --portal-listening-port 8080 \
     --ui-directory /usr/local/share/wifi-connect/ui
 SCRIPT
 
@@ -185,7 +185,7 @@ ls /etc/NetworkManager/system-connections/
 | `--portal-ssid` | `PORTAL_SSID` | `WiFi Connect` | Tên mạng Access Point |
 | `--portal-passphrase` | `PORTAL_PASSPHRASE` | _(không có)_ | Mật khẩu AP (tuỳ chọn) |
 | `--portal-gateway` | `PORTAL_GATEWAY` | `192.168.42.1` | Gateway captive portal |
-| `--portal-listening-port` | `PORTAL_LISTENING_PORT` | `80` | Port web server |
+| `--portal-listening-port` | `PORTAL_LISTENING_PORT` | `8080` | Port web server |
 | `--ui-directory` | `UI_DIRECTORY` | `ui` | Thư mục giao diện |
 | `--portal-interface` | `PORTAL_INTERFACE` | _(tự detect)_ | Interface WiFi |
 | `--activity-timeout` | `ACTIVITY_TIMEOUT` | `0` | Tự tắt sau N giây không hoạt động |

@@ -428,7 +428,7 @@
       <!-- ALERTS -->
       <div id="alert-success" class="alert alert-success">
         <span class="alert-icon">&#10003;</span>
-        <span id="alert-success-text">Đang kết nối... Thiết bị sẽ tự động kết nối WiFi. Nếu không thành công, mạng cài đặt sẽ xuất hiện lại sau vài phút.</span>
+        <span id="alert-success-text">Kết nối WiFi thành công! Thiết bị đã sẵn sàng sử dụng.</span>
       </div>
       <div id="alert-error" class="alert alert-error">
         <span class="alert-icon">&#10007;</span>
@@ -603,10 +603,11 @@
         body: JSON.stringify(data)
       })
       .then(r => {
-        loadingOverlay.classList.remove('show');
         if (!r.ok) throw new Error(r.statusText);
-        showAlert('success');
-        btnConnect.disabled = true;
+        // wifi-connect returns 200 before verifying password
+        // Show "verifying" state and poll for result
+        loadingOverlay.querySelector('p').textContent = 'Đang xác thực mật khẩu WiFi...';
+        pollConnection(ssid, 0);
       })
       .catch(e => {
         loadingOverlay.classList.remove('show');
@@ -614,6 +615,59 @@
         showAlert('error', 'Kết nối thất bại. ' + (e.message || 'Vui lòng thử lại.'));
       });
     });
+
+    // Poll connection status after /connect
+    // Phase 1: Wait for AP to go down (wifi-connect is trying)
+    // Phase 2: After AP goes down, wait ~35s to see if AP comes back
+    //   - AP comes back = wrong password (FAIL)
+    //   - AP stays gone = connected (SUCCESS)
+    var apWentDown = false;
+
+    function pollConnection(ssid, attempt) {
+      var maxAttempts = 25; // 25 x 2s = 50s total timeout
+      var apDownThreshold = 12; // wait 12 polls (~24s) after AP goes down before declaring success
+
+      if (!apWentDown && attempt >= 10) {
+        // AP never went down after 20s - something went wrong
+        loadingOverlay.querySelector('.spinner').style.display = 'none';
+        loadingOverlay.querySelector('p').innerHTML = '<span style="font-size:48px;display:block;margin-bottom:12px;color:var(--warning)">&#9888;</span><span style="color:var(--warning)">Có lỗi xảy ra</span><br><small style="color:var(--text-muted);font-size:13px;margin-top:8px;display:block">Vui lòng thử lại.</small>';
+        btnConnect.disabled = false;
+        return;
+      }
+
+      setTimeout(function() {
+        fetch('/networks', { signal: AbortSignal.timeout(3000) })
+          .then(function() {
+            if (apWentDown) {
+              // AP came back after going down = connection FAILED
+              loadingOverlay.classList.remove('show');
+              loadingOverlay.querySelector('.spinner').style.display = '';
+              loadingOverlay.querySelector('p').style.color = '';
+              loadingOverlay.querySelector('p').textContent = 'Đang kết nối WiFi...';
+              apWentDown = false;
+              btnConnect.disabled = false;
+              showAlert('error', 'Mật khẩu WiFi không đúng. Vui lòng kiểm tra và thử lại.');
+            } else {
+              // AP still up, wifi-connect hasn't tried yet
+              pollConnection(ssid, attempt + 1);
+            }
+          })
+          .catch(function() {
+            if (!apWentDown) {
+              apWentDown = true;
+              loadingOverlay.querySelector('p').textContent = 'Đang xác thực mật khẩu...';
+              pollConnection(ssid, 0); // reset counter for phase 2
+            } else if (attempt >= apDownThreshold) {
+              // AP has been down for 24s+ = connection succeeded
+              loadingOverlay.querySelector('.spinner').style.display = 'none';
+              loadingOverlay.querySelector('p').innerHTML = '<span style="font-size:48px;display:block;margin-bottom:12px">&#10003;</span><span style="color:var(--success)">Kết nối WiFi thành công!</span><br><small style="color:var(--text-muted);font-size:13px;margin-top:8px;display:block">Thiết bị đã kết nối mạng <strong>' + ssid + '</strong>.<br>Bạn có thể đóng trang này.</small>';
+            } else {
+              // AP still down, keep waiting
+              pollConnection(ssid, attempt + 1);
+            }
+          });
+      }, 2000);
+    }
 
     // Helpers
     function showAlert(type, msg) {

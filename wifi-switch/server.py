@@ -3,6 +3,8 @@
 
 import subprocess
 import socket
+import sys
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 HTML_PAGE = """<!DOCTYPE html>
@@ -84,6 +86,15 @@ class Handler(BaseHTTPRequestHandler):
             return 'Chưa kết nối'
 
     def _get_wifi_iface(self):
+        return _wifi_iface or 'wlan0'
+
+    def log_message(self, format, *args):
+        pass
+
+
+def detect_wifi_iface():
+    """Detect WiFi interface with retries at startup."""
+    for attempt in range(30):
         try:
             result = subprocess.check_output(
                 ['nmcli', '-t', '-f', 'DEVICE,TYPE', 'device']
@@ -94,10 +105,10 @@ class Handler(BaseHTTPRequestHandler):
                     return parts[0]
         except Exception:
             pass
-        return 'wlan0'
-
-    def log_message(self, format, *args):
-        pass
+        if attempt < 29:
+            print(f'WiFi device not found, retrying ({attempt + 1}/30)...')
+            time.sleep(2)
+    return None
 
 
 def get_local_ip():
@@ -111,7 +122,14 @@ def get_local_ip():
         return '0.0.0.0'
 
 
+_wifi_iface = None
+
 if __name__ == '__main__':
+    _wifi_iface = detect_wifi_iface()
+    if not _wifi_iface:
+        print('ERROR: No WiFi interface found after 30 retries. Exiting.')
+        sys.exit(1)
+    print(f'WiFi interface: {_wifi_iface}')
     server = HTTPServer(('0.0.0.0', 8888), Handler)
     ip = get_local_ip()
     print(f'WiFi Switch server running on http://{ip}:8888')

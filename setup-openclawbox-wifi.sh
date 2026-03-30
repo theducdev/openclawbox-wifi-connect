@@ -114,16 +114,16 @@ systemctl stop openclawbox-wifi-switch.service 2>/dev/null || true
 cat > /etc/systemd/system/openclawbox-wifi.service <<EOF
 [Unit]
 Description=OpenClawBox WiFi Captive Portal (AP+STA)
-After=NetworkManager.service dbus.service
-Wants=NetworkManager.service
+After=NetworkManager.service dbus.service network-online.target
+Wants=NetworkManager.service network-online.target
 
 [Service]
 Type=simple
 ExecStart=/usr/bin/python3 /usr/local/bin/openclawbox-captive-portal.py
 ExecStopPost=/bin/bash -c 'iw dev ${AP_IFACE} del 2>/dev/null; killall hostapd 2>/dev/null; iptables -t nat -F PREROUTING 2>/dev/null; true'
-Restart=on-failure
+Restart=always
 RestartSec=10
-TimeoutStartSec=30
+TimeoutStartSec=90
 
 [Install]
 WantedBy=multi-user.target
@@ -133,14 +133,14 @@ EOF
 cat > /etc/systemd/system/openclawbox-wifi-switch.service <<'EOF'
 [Unit]
 Description=OpenClawBox WiFi Switch
-After=NetworkManager.service
-Wants=NetworkManager.service
+After=NetworkManager.service network-online.target
+Wants=NetworkManager.service network-online.target
 
 [Service]
 Type=simple
 ExecStart=/usr/bin/python3 /usr/local/bin/openclawbox-wifi-switch.py
 Restart=always
-RestartSec=5
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target

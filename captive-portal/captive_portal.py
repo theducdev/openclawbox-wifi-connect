@@ -39,26 +39,34 @@ def run(cmd, **kwargs):
     return subprocess.run(cmd, **kwargs)
 
 
+WATCHDOG_INTERVAL = 15  # seconds between WiFi checks
+WATCHDOG_FAIL_THRESHOLD = 4  # consecutive failures before restarting AP
+
+
 def detect_wifi_interface():
-    """Auto-detect the WiFi interface name."""
+    """Auto-detect the WiFi interface name, with retries at boot."""
     global STA_IFACE, AP_IFACE
-    result = run(["nmcli", "-t", "-f", "DEVICE,TYPE", "device"])
-    for line in result.stdout.strip().split("\n"):
-        parts = line.split(":")
-        if len(parts) >= 2 and parts[1] == "wifi":
-            STA_IFACE = parts[0]
+    for attempt in range(30):
+        result = run(["nmcli", "-t", "-f", "DEVICE,TYPE", "device"])
+        for line in result.stdout.strip().split("\n"):
+            parts = line.split(":")
+            if len(parts) >= 2 and parts[1] == "wifi":
+                STA_IFACE = parts[0]
+                AP_IFACE = STA_IFACE + "ap"
+                print(f"  WiFi interface detected: {STA_IFACE}")
+                return
+        # Fallback: try iw
+        result = run(["iw", "dev"])
+        match = re.search(r"Interface\s+(\S+)", result.stdout)
+        if match:
+            STA_IFACE = match.group(1)
             AP_IFACE = STA_IFACE + "ap"
             print(f"  WiFi interface detected: {STA_IFACE}")
             return
-    # Fallback: try iw
-    result = run(["iw", "dev"])
-    match = re.search(r"Interface\s+(\S+)", result.stdout)
-    if match:
-        STA_IFACE = match.group(1)
-        AP_IFACE = STA_IFACE + "ap"
-        print(f"  WiFi interface detected: {STA_IFACE}")
-        return
-    raise RuntimeError("No WiFi interface found")
+        if attempt < 29:
+            print(f"  WiFi device not found, retrying ({attempt + 1}/30)...")
+            time.sleep(2)
+    raise RuntimeError("No WiFi interface found after 30 retries")
 
 
 def get_current_ssid():
@@ -352,17 +360,6 @@ def teardown():
     print("Cleanup complete")
 
 
-def schedule_teardown():
-    """Tear down AP after delay (called after successful connection)."""
-    def _do():
-        print(f"Tearing down AP after {AP_TEARDOWN_DELAY}s delay...")
-        teardown()
-        os._exit(0)
-    t = threading.Timer(AP_TEARDOWN_DELAY, _do)
-    t.daemon = True
-    t.start()
-
-
 class PortalHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the captive portal."""
 
@@ -433,8 +430,6 @@ class PortalHandler(BaseHTTPRequestHandler):
                 "ssid": ssid,
                 "ip": ip,
             })
-            # Schedule AP teardown
-            schedule_teardown()
         else:
             print(f"Failed to connect to '{ssid}': {message}")
             self.send_json(200, {
@@ -468,6 +463,65 @@ class PortalHandler(BaseHTTPRequestHandler):
         print(f"[HTTP] {args[0]}" if args else "")
 
 
+portal_server = None
+portal_thread = None
+
+
+def start_portal():
+    """Start the AP and captive portal HTTP server."""
+    global portal_server, portal_thread
+
+    # Ensure STA is disconnected so AP can scan
+    run(["nmcli", "device", "disconnect", STA_IFACE], check=False)
+
+    # Setup AP
+    setup_ap_interface()
+    start_hostapd()
+    configure_ap_network()
+    start_dnsmasq()
+    setup_iptables()
+
+    # Start HTTP server in a thread
+    print(f"[5/5] Starting portal on http://{AP_IP}:{PORTAL_PORT}")
+    print(f"  AP SSID: {SSID}")
+    print(f"  Portal:  http://{AP_IP}:{PORTAL_PORT}")
+
+    portal_server = HTTPServer((AP_IP, PORTAL_PORT), PortalHandler)
+    portal_thread = threading.Thread(target=portal_server.serve_forever, daemon=True)
+    portal_thread.start()
+
+
+def stop_portal():
+    """Stop the AP and captive portal HTTP server."""
+    global portal_server, portal_thread
+    if portal_server:
+        portal_server.shutdown()
+        portal_server = None
+        portal_thread = None
+    teardown()
+
+
+def watchdog_loop():
+    """Monitor WiFi and restart AP if connection drops."""
+    fail_count = 0
+
+    while True:
+        time.sleep(WATCHDOG_INTERVAL)
+
+        if is_wifi_connected():
+            if fail_count > 0:
+                print(f"[watchdog] WiFi reconnected: {get_current_ssid()}")
+            fail_count = 0
+        else:
+            fail_count += 1
+            print(f"[watchdog] WiFi disconnected ({fail_count}/{WATCHDOG_FAIL_THRESHOLD})")
+
+            if fail_count >= WATCHDOG_FAIL_THRESHOLD:
+                print("[watchdog] WiFi lost — restarting captive portal AP...")
+                fail_count = 0
+                return  # Exit watchdog to restart portal
+
+
 def main():
     print("=" * 44)
     print("  OpenClawBox WiFi Captive Portal (AP+STA)")
@@ -476,31 +530,28 @@ def main():
     # Auto-detect WiFi interface
     detect_wifi_interface()
 
-    # Check if already connected
-    ssid = get_current_ssid()
-    if ssid:
-        print(f"WiFi already connected: {ssid}. Exiting.")
-        sys.exit(0)
+    while True:
+        ssid = get_current_ssid()
+        if ssid:
+            print(f"WiFi connected: {ssid}. Monitoring...")
+            watchdog_loop()
+            # watchdog_loop returns when WiFi is lost
+            continue
 
-    # Ensure STA is disconnected
-    run(["nmcli", "device", "disconnect", STA_IFACE], check=False)
+        # WiFi not connected — start captive portal
+        print("WiFi not connected. Starting captive portal...")
+        start_portal()
 
-    # Setup
-    setup_ap_interface()
-    start_hostapd()
-    configure_ap_network()
-    start_dnsmasq()
-    setup_iptables()
+        # Wait until WiFi connects
+        while not is_wifi_connected():
+            time.sleep(5)
 
-    # Start HTTP server
-    print(f"[5/5] Starting portal on http://{AP_IP}:{PORTAL_PORT}")
-    print()
-    print(f"  AP SSID: {SSID}")
-    print(f"  Portal:  http://{AP_IP}:{PORTAL_PORT}")
-    print()
-
-    server = HTTPServer((AP_IP, PORTAL_PORT), PortalHandler)
-    server.serve_forever()
+        # Connected! Stop portal after delay
+        ssid = get_current_ssid()
+        print(f"WiFi connected to '{ssid}'. Stopping portal in {AP_TEARDOWN_DELAY}s...")
+        time.sleep(AP_TEARDOWN_DELAY)
+        stop_portal()
+        print("Portal stopped. Entering watchdog mode.")
 
 
 def signal_handler(sig, frame):

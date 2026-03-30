@@ -28,7 +28,7 @@ Các giải pháp cũ (balena wifi-connect, comitup...) phải **tắt AP để 
 ### Cài đặt (1 lệnh)
 
 ```bash
-sudo apt-get install -y git && git clone https://github.com/theducdev/openclawbox-wifi-connect.git /tmp/openclawbox-wifi-setup && sudo bash /tmp/openclawbox-wifi-setup/setup-openclawbox-wifi.sh && rm -rf /tmp/openclawbox-wifi-setup
+curl -sL https://github.com/theducdev/openclawbox-wifi-connect/archive/refs/heads/main.tar.gz | tar xz && cd openclawbox-wifi-connect-main && sudo bash setup-openclawbox-wifi.sh
 ```
 
 Script sẽ tự động:

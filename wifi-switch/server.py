@@ -94,7 +94,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def detect_wifi_iface():
     """Detect WiFi interface with retries at startup."""
-    for attempt in range(30):
+    for attempt in range(10):
         try:
             result = subprocess.check_output(
                 ['nmcli', '-t', '-f', 'DEVICE,TYPE', 'device']
@@ -105,8 +105,8 @@ def detect_wifi_iface():
                     return parts[0]
         except Exception:
             pass
-        if attempt < 29:
-            print(f'WiFi device not found, retrying ({attempt + 1}/30)...')
+        if attempt < 9:
+            print(f'WiFi device not found, retrying ({attempt + 1}/10)...')
             time.sleep(2)
     return None
 

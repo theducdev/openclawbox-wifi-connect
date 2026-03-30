@@ -87,7 +87,7 @@ def reboot_if_no_wifi():
 def detect_wifi_interface():
     """Auto-detect the WiFi interface name, with retries at boot."""
     global STA_IFACE, AP_IFACE
-    for attempt in range(30):
+    for attempt in range(10):
         result = run(["nmcli", "-t", "-f", "DEVICE,TYPE", "device"])
         for line in result.stdout.strip().split("\n"):
             parts = line.split(":")
@@ -106,14 +106,14 @@ def detect_wifi_interface():
             print(f"  WiFi interface detected: {STA_IFACE}")
             clear_reboot_count()
             return
-        if attempt < 29:
-            print(f"  WiFi device not found, retrying ({attempt + 1}/30)...")
+        if attempt < 9:
+            print(f"  WiFi device not found, retrying ({attempt + 1}/10)...")
             time.sleep(2)
 
     # WiFi not found after all retries — try rebooting
     if reboot_if_no_wifi():
         sys.exit(0)  # Will reboot, exit cleanly
-    raise RuntimeError(f"No WiFi interface found after 30 retries and {MAX_REBOOTS} reboots")
+    raise RuntimeError(f"No WiFi interface found after 10 retries and {MAX_REBOOTS} reboots")
 
 
 def get_current_ssid():

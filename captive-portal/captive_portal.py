@@ -41,47 +41,6 @@ def run(cmd, **kwargs):
 
 WATCHDOG_INTERVAL = 15  # seconds between WiFi checks
 WATCHDOG_FAIL_THRESHOLD = 4  # consecutive failures before restarting AP
-REBOOT_COUNT_FILE = "/var/lib/openclawbox/reboot-count"
-MAX_REBOOTS = 5
-
-
-def get_reboot_count():
-    """Get current reboot attempt count."""
-    try:
-        with open(REBOOT_COUNT_FILE, "r") as f:
-            return int(f.read().strip())
-    except Exception:
-        return 0
-
-
-def set_reboot_count(count):
-    """Save reboot attempt count."""
-    os.makedirs(os.path.dirname(REBOOT_COUNT_FILE), exist_ok=True)
-    with open(REBOOT_COUNT_FILE, "w") as f:
-        f.write(str(count))
-
-
-def clear_reboot_count():
-    """Reset reboot count after successful WiFi detection."""
-    try:
-        os.remove(REBOOT_COUNT_FILE)
-    except FileNotFoundError:
-        pass
-
-
-def reboot_if_no_wifi():
-    """Reboot machine if WiFi card not found, up to MAX_REBOOTS times."""
-    count = get_reboot_count()
-    if count >= MAX_REBOOTS:
-        print(f"  Already rebooted {count} times. Giving up — WiFi card may be dead.")
-        return False
-    count += 1
-    set_reboot_count(count)
-    print(f"  WiFi not found. Rebooting... (attempt {count}/{MAX_REBOOTS})")
-    time.sleep(2)
-    subprocess.run(["reboot"])
-    time.sleep(30)  # Wait for reboot to take effect
-    return True
 
 
 def detect_wifi_interface():
@@ -95,7 +54,6 @@ def detect_wifi_interface():
                 STA_IFACE = parts[0]
                 AP_IFACE = STA_IFACE + "ap"
                 print(f"  WiFi interface detected: {STA_IFACE}")
-                clear_reboot_count()
                 return
         # Fallback: try iw
         result = run(["iw", "dev"])
@@ -104,16 +62,12 @@ def detect_wifi_interface():
             STA_IFACE = match.group(1)
             AP_IFACE = STA_IFACE + "ap"
             print(f"  WiFi interface detected: {STA_IFACE}")
-            clear_reboot_count()
             return
         if attempt < 9:
             print(f"  WiFi device not found, retrying ({attempt + 1}/10)...")
             time.sleep(2)
 
-    # WiFi not found after all retries — try rebooting
-    if reboot_if_no_wifi():
-        sys.exit(0)  # Will reboot, exit cleanly
-    raise RuntimeError(f"No WiFi interface found after 10 retries and {MAX_REBOOTS} reboots")
+    raise RuntimeError("No WiFi interface found after 10 retries")
 
 
 def get_current_ssid():

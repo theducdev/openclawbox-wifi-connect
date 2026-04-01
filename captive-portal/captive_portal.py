@@ -41,11 +41,47 @@ def run(cmd, **kwargs):
 
 WATCHDOG_INTERVAL = 15  # seconds between WiFi checks
 WATCHDOG_FAIL_THRESHOLD = 4  # consecutive failures before restarting AP
+DETECT_FAIL_COUNT_FILE = "/var/lib/openclawbox/detect-fail-count"
+MAX_DETECT_FAILURES = 10
+
+
+def get_detect_fail_count():
+    """Get the number of times WiFi detection has failed across service restarts."""
+    try:
+        with open(DETECT_FAIL_COUNT_FILE, "r") as f:
+            return int(f.read().strip())
+    except Exception:
+        return 0
+
+
+def increment_detect_fail_count():
+    """Increment and save the detection failure count."""
+    count = get_detect_fail_count() + 1
+    os.makedirs(os.path.dirname(DETECT_FAIL_COUNT_FILE), exist_ok=True)
+    with open(DETECT_FAIL_COUNT_FILE, "w") as f:
+        f.write(str(count))
+    return count
+
+
+def clear_detect_fail_count():
+    """Reset failure count after successful WiFi detection."""
+    try:
+        os.remove(DETECT_FAIL_COUNT_FILE)
+    except FileNotFoundError:
+        pass
 
 
 def detect_wifi_interface():
     """Auto-detect the WiFi interface name, with retries at boot."""
     global STA_IFACE, AP_IFACE
+
+    # Check if we've already failed too many times across restarts
+    fail_count = get_detect_fail_count()
+    if fail_count >= MAX_DETECT_FAILURES:
+        print(f"  WiFi detection failed {fail_count} times. Giving up — WiFi card may be dead.")
+        print("  To retry, delete {DETECT_FAIL_COUNT_FILE} and restart the service.")
+        sys.exit(1)
+
     for attempt in range(10):
         result = run(["nmcli", "-t", "-f", "DEVICE,TYPE", "device"])
         for line in result.stdout.strip().split("\n"):
@@ -54,6 +90,7 @@ def detect_wifi_interface():
                 STA_IFACE = parts[0]
                 AP_IFACE = STA_IFACE + "ap"
                 print(f"  WiFi interface detected: {STA_IFACE}")
+                clear_detect_fail_count()
                 return
         # Fallback: try iw
         result = run(["iw", "dev"])
@@ -62,12 +99,14 @@ def detect_wifi_interface():
             STA_IFACE = match.group(1)
             AP_IFACE = STA_IFACE + "ap"
             print(f"  WiFi interface detected: {STA_IFACE}")
+            clear_detect_fail_count()
             return
         if attempt < 9:
             print(f"  WiFi device not found, retrying ({attempt + 1}/10)...")
             time.sleep(2)
 
-    raise RuntimeError("No WiFi interface found after 10 retries")
+    count = increment_detect_fail_count()
+    raise RuntimeError(f"No WiFi interface found after 10 retries (failure {count}/{MAX_DETECT_FAILURES})")
 
 
 def get_current_ssid():

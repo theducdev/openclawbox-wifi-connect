@@ -75,14 +75,15 @@ def detect_wifi_interface():
     """Auto-detect the WiFi interface name, with retries at boot."""
     global STA_IFACE, AP_IFACE
 
-    # Check if we've already failed too many times across restarts
+    # Check if we've already failed too many times in THIS boot cycle
     fail_count = get_detect_fail_count()
     if fail_count >= MAX_DETECT_FAILURES:
-        print(f"  WiFi detection failed {fail_count} times. Giving up — WiFi card may be dead.")
-        print("  To retry, delete {DETECT_FAIL_COUNT_FILE} and restart the service.")
+        print(f"  WiFi detection failed {fail_count} times this boot. Giving up — WiFi card may be dead.")
+        print(f"  Counter resets on next reboot. To retry now: delete {DETECT_FAIL_COUNT_FILE} and restart.")
         sys.exit(1)
 
-    for attempt in range(10):
+    max_retries = 30  # 30 retries × 2s = 60s total wait
+    for attempt in range(max_retries):
         result = run(["nmcli", "-t", "-f", "DEVICE,TYPE", "device"])
         for line in result.stdout.strip().split("\n"):
             parts = line.split(":")
@@ -91,7 +92,7 @@ def detect_wifi_interface():
                 AP_IFACE = STA_IFACE + "ap"
                 print(f"  WiFi interface detected: {STA_IFACE}")
                 clear_detect_fail_count()
-                return
+                return True
         # Fallback: try iw
         result = run(["iw", "dev"])
         match = re.search(r"Interface\s+(\S+)", result.stdout)
@@ -100,13 +101,13 @@ def detect_wifi_interface():
             AP_IFACE = STA_IFACE + "ap"
             print(f"  WiFi interface detected: {STA_IFACE}")
             clear_detect_fail_count()
-            return
-        if attempt < 9:
-            print(f"  WiFi device not found, retrying ({attempt + 1}/10)...")
+            return True
+        if attempt < max_retries - 1:
+            print(f"  WiFi device not found, retrying ({attempt + 1}/{max_retries})...")
             time.sleep(2)
 
     count = increment_detect_fail_count()
-    raise RuntimeError(f"No WiFi interface found after 10 retries (failure {count}/{MAX_DETECT_FAILURES})")
+    raise RuntimeError(f"No WiFi interface found after {max_retries} retries (failure {count}/{MAX_DETECT_FAILURES})")
 
 
 def get_current_ssid():
@@ -548,6 +549,11 @@ def watchdog_loop():
     while True:
         time.sleep(WATCHDOG_INTERVAL)
 
+        # Check interface still exists (USB adapter might be unplugged)
+        if not check_interface_exists():
+            print(f"[watchdog] Interface {STA_IFACE} disappeared!")
+            return  # Exit to main loop for re-detection
+
         if is_wifi_connected():
             if fail_count > 0:
                 print(f"[watchdog] WiFi reconnected: {get_current_ssid()}")
@@ -562,15 +568,38 @@ def watchdog_loop():
                 return  # Exit watchdog to restart portal
 
 
+def check_interface_exists():
+    """Check if the current STA interface still exists in the system."""
+    if not STA_IFACE:
+        return False
+    result = run(["ip", "link", "show", STA_IFACE])
+    return result.returncode == 0
+
+
 def main():
     print("=" * 44)
     print("  OpenClawBox WiFi Captive Portal (AP+STA)")
     print("=" * 44)
 
+    # Reset failure counter on each fresh boot (counter is only for consecutive failures)
+    clear_detect_fail_count()
+
     # Auto-detect WiFi interface
     detect_wifi_interface()
 
     while True:
+        # Re-detect if interface disappeared (e.g. USB adapter unplugged/replugged)
+        if not check_interface_exists():
+            print(f"[main] Interface {STA_IFACE} disappeared. Re-detecting...")
+            stop_portal()  # clean up any running AP
+            try:
+                detect_wifi_interface()
+            except RuntimeError as e:
+                print(f"[main] Re-detect failed: {e}")
+                print("[main] Waiting 10s before retrying...")
+                time.sleep(10)
+                continue
+
         ssid = get_current_ssid()
         if ssid:
             print(f"WiFi connected: {ssid}. Monitoring...")
@@ -585,13 +614,18 @@ def main():
         # Wait until WiFi connects
         while not is_wifi_connected():
             time.sleep(5)
-
-        # Connected! Stop portal after delay
-        ssid = get_current_ssid()
-        print(f"WiFi connected to '{ssid}'. Stopping portal in {AP_TEARDOWN_DELAY}s...")
-        time.sleep(AP_TEARDOWN_DELAY)
-        stop_portal()
-        print("Portal stopped. Entering watchdog mode.")
+            # Check interface still exists during wait
+            if not check_interface_exists():
+                print("[main] Interface lost while waiting for WiFi. Restarting...")
+                stop_portal()
+                break
+        else:
+            # Connected! Stop portal after delay
+            ssid = get_current_ssid()
+            print(f"WiFi connected to '{ssid}'. Stopping portal in {AP_TEARDOWN_DELAY}s...")
+            time.sleep(AP_TEARDOWN_DELAY)
+            stop_portal()
+            print("Portal stopped. Entering watchdog mode.")
 
 
 def signal_handler(sig, frame):

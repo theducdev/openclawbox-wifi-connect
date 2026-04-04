@@ -71,6 +71,41 @@ def clear_detect_fail_count():
         pass
 
 
+def detect_wifi_via_sysfs():
+    """Detect WiFi interface via kernel sysfs — fastest, no dependency on NetworkManager."""
+    try:
+        for iface in os.listdir("/sys/class/net/"):
+            # Skip virtual AP interfaces (e.g. wlan0ap) and loopback
+            if iface.endswith("ap") or iface == "lo":
+                continue
+            if os.path.isdir(f"/sys/class/net/{iface}/wireless"):
+                return iface
+    except OSError:
+        pass
+    return None
+
+
+def detect_wifi_via_nmcli():
+    """Detect WiFi interface via NetworkManager."""
+    result = run(["nmcli", "-t", "-f", "DEVICE,TYPE", "device"])
+    for line in result.stdout.strip().split("\n"):
+        parts = line.split(":")
+        if len(parts) >= 2 and parts[1] == "wifi" and not parts[0].endswith("ap"):
+            return parts[0]
+    return None
+
+
+def detect_wifi_via_iw():
+    """Detect WiFi interface via iw (kernel driver level)."""
+    result = run(["iw", "dev"])
+    for match in re.finditer(r"Interface\s+(\S+)", result.stdout):
+        iface = match.group(1)
+        # Skip virtual AP interfaces
+        if not iface.endswith("ap"):
+            return iface
+    return None
+
+
 def detect_wifi_interface():
     """Auto-detect the WiFi interface name, with retries at boot."""
     global STA_IFACE, AP_IFACE
@@ -82,22 +117,15 @@ def detect_wifi_interface():
         print(f"  Counter resets on next reboot. To retry now: delete {DETECT_FAIL_COUNT_FILE} and restart.")
         sys.exit(1)
 
+    # Unblock WiFi in case rfkill is blocking it
+    run(["rfkill", "unblock", "wifi"], check=False)
+
     max_retries = 30  # 30 retries × 2s = 60s total wait
     for attempt in range(max_retries):
-        result = run(["nmcli", "-t", "-f", "DEVICE,TYPE", "device"])
-        for line in result.stdout.strip().split("\n"):
-            parts = line.split(":")
-            if len(parts) >= 2 and parts[1] == "wifi":
-                STA_IFACE = parts[0]
-                AP_IFACE = STA_IFACE + "ap"
-                print(f"  WiFi interface detected: {STA_IFACE}")
-                clear_detect_fail_count()
-                return True
-        # Fallback: try iw
-        result = run(["iw", "dev"])
-        match = re.search(r"Interface\s+(\S+)", result.stdout)
-        if match:
-            STA_IFACE = match.group(1)
+        # Try 3 methods in order: sysfs (fastest) → nmcli → iw
+        iface = detect_wifi_via_sysfs() or detect_wifi_via_nmcli() or detect_wifi_via_iw()
+        if iface:
+            STA_IFACE = iface
             AP_IFACE = STA_IFACE + "ap"
             print(f"  WiFi interface detected: {STA_IFACE}")
             clear_detect_fail_count()
